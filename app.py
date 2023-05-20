@@ -6,6 +6,7 @@ import re
 from flask import Flask, jsonify, abort, make_response, request, url_for, current_app
 from datetime import timedelta
 from functools import update_wrapper
+import time
 import MySQLdb
 from MySQLdb.constants import FIELD_TYPE
 import config
@@ -945,7 +946,10 @@ def getVersion(database):
 
 if __name__ == '__main__':
     f = open('log.txt', 'a')
-    f.write('running')
+    timestr = time.strftime("%Y.%m.%d-%H:%M:%S")
+    f.write(timestr+'\n')
+    f.write(sys.version)
+    f.write('running\n')
     f.close()
 
     app.run(host="0.0.0.0", port=5001, debug=True, threaded=True)

@@ -656,43 +656,43 @@ def _getKeggResults(db, keggs, gtdb_ids, size_limit=None, with_sequence=False, t
 
     data_tuple = []
     for r in rows:
-	data = {}
-	data['keggId'] = r['keggId']
-	data['geneId'] = r['geneId']
-	data['gtdbId'] = r['gtdbId']
-	data['eval'] = float(r['eval'])
-	data['bitscore'] = float(r['bitscore'])
-	data['percentIdentity'] = float(r['percentIdentity'])
-	data['subjectPercentAlignment'] = float(r['subjectPercentAlignment'])
-	if with_sequence:
-		data['sequence'] = r['sequence']
-	
-	if r['taxonomy']:
-		for tax in r['taxonomy'].split(';'):
-			tax_arr = tax.split('__')
-			if tax_arr[0] == 'd':
-				data['db'] = tax_arr[1]
-			elif tax_arr[0] == 'p':
-				data['phylum'] = tax_arr[1]
-			elif tax_arr[0] == 'c':
-				data['class'] = tax_arr[1]
-			elif tax_arr[0] == 'o':
-				data['order'] = tax_arr[1]
-			elif tax_arr[0] == 'f':
-				data['family'] = tax_arr[1]
-			elif tax_arr[0] == 'g':
-				data['genus'] = tax_arr[1]
-			else:
-				data['species'] = tax_arr[1]
-	else:
-		data['db'] = 'None'
-		data['phylum'] = 'None'
-		data['class'] = 'None'
-		data['order'] = 'None'
-		data['family'] = 'None'
-		data['genus'] = 'None'
-		data['species'] = 'None'
-	data_tuple.append(data)
+        data = {}
+        data['keggId'] = r['keggId']
+        data['geneId'] = r['geneId']
+        data['gtdbId'] = r['gtdbId']
+        data['eval'] = float(r['eval'])
+        data['bitscore'] = float(r['bitscore'])
+        data['percentIdentity'] = float(r['percentIdentity'])
+        data['subjectPercentAlignment'] = float(r['subjectPercentAlignment'])
+        if with_sequence:
+            data['sequence'] = r['sequence']
+
+        if r['taxonomy']:
+            for tax in r['taxonomy'].split(';'):
+                tax_arr = tax.split('__')
+                if tax_arr[0] == 'd':
+                    data['db'] = tax_arr[1]
+                elif tax_arr[0] == 'p':
+                    data['phylum'] = tax_arr[1]
+                elif tax_arr[0] == 'c':
+                    data['class'] = tax_arr[1]
+                elif tax_arr[0] == 'o':
+                    data['order'] = tax_arr[1]
+                elif tax_arr[0] == 'f':
+                    data['family'] = tax_arr[1]
+                elif tax_arr[0] == 'g':
+                    data['genus'] = tax_arr[1]
+                else:
+                    data['species'] = tax_arr[1]
+        else:
+            data['db'] = 'None'
+            data['phylum'] = 'None'
+            data['class'] = 'None'
+            data['order'] = 'None'
+            data['family'] = 'None'
+            data['genus'] = 'None'
+            data['species'] = 'None'
+        data_tuple.append(data)
 
     data_tuple = tuple(data_tuple)
     return data_tuple

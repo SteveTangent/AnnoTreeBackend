@@ -9,17 +9,31 @@ def get_rows(db):
     given a database connection, get all rows from node table
     joined with relevant information
     '''
+    # sql = """
+    # SELECT n.id, n.level, n.parent_id AS parentId, n.is_leaf AS isLeaf, n.length,
+    #         r.rank, t.gtdb_taxonomy AS gtdbTaxonomy
+    #     FROM node n
+    #     LEFT JOIN node_gtdb_ranks r ON r.node_id = n.id
+    #     LEFT JOIN node_tax t ON t.gtdb_id = n.gtdb_id
+    #     WHERE (r.is_highest = 1 OR r.node_id IS NULL)
+    # """.format()
+    # print('get rows')
     sql = """
-    SELECT n.id, n.level, n.parent_id AS parentId, n.is_leaf AS isLeaf, n.length,
-            r.rank, t.gtdb_taxonomy AS gtdbTaxonomy
-        FROM node n
-        LEFT JOIN node_gtdb_ranks r ON r.node_id = n.id
-        LEFT JOIN node_tax t ON t.gtdb_id = n.gtdb_id
-        WHERE (r.is_highest = 1 OR r.node_id IS NULL)
-    """.format()
+        SELECT n.node_id As id, n.level, n.parent_id AS parentId, n.is_leaf AS isLeaf, n.length,
+                r.cur_rank , t.taxonomy AS gtdbTaxonomy
+            FROM node n
+            LEFT JOIN node_gtdb_rank r ON r.node_id = n.node_id
+            LEFT JOIN node_taxonomy t ON t.gtdb_id = n.gtdb_id
+            WHERE (r.is_highest = 1 OR r.node_id is NULL)
+        """.format()
+
     c = db.cursor(dictionary=True)
     c.execute(sql)
     rows = c.fetchall()
+    for r in rows:
+        r['rank'] = r['cur_rank']
+        del r['cur_rank']
+
     return rows
 
 def get_taxonomy_levels(taxonomy_str):
@@ -49,7 +63,7 @@ def process_rows(rows):
         if gtdb_taxonomy:
             r['gtdbTaxonomy'] = get_taxonomy_levels(gtdb_taxonomy)
         r['id'] = int(r['id'])
-        r['parentId'] = int(r['parentId']) if r['parentId'] else None
+        r['parentId'] = int(r['parentId']) if r['parentId'] != 'NULL' else None
         r['length'] = float(r['length']) if r['length'] is not None else None
         r['children'] = []
         r['isLeaf'] = int(r['isLeaf'])
@@ -67,6 +81,7 @@ def link_tree(rows):
     '''
         link tree node according to parent id
     '''
+
     m = {r['id']:r for r in rows}
     root = None
     for r in rows:
@@ -94,7 +109,9 @@ def get_tree(db):
         }
     '''
     rows = get_rows(db)
+    print('rows')
     process_rows(rows)
+    print('process')
     root = link_tree(rows)
     count_tree(root)
     return root

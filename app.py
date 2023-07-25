@@ -1,5 +1,6 @@
-#!flask/bin/python
+#!flask/bin/python3
 
+import os
 import sys
 import argparse
 import re
@@ -7,17 +8,23 @@ from flask import Flask, jsonify, abort, make_response, request, url_for, curren
 from datetime import timedelta
 from functools import update_wrapper
 import time
-import MySQLdb
-from MySQLdb.constants import FIELD_TYPE
+
+import mysql.connector
+from mysql.connector import FieldType
+
+# import MySQLdb
+# from MySQLdb.constants import FIELD_TYPE
 import config
 from tree_exporter import get_tree
 import json
 import itertools
+
+
 app = Flask(__name__)
 
-KEGG_ALLOWED_FIELDS = set(['percent_identity', 'eval', 'query_percent_alignment', 'subject_percent_alignment'])
-PFAM_ALLOWED_FIELDS = set(['eval'])
-TIGRFAM_ALLOWED_FIELDS = set(['eval'])
+KEGG_ALLOWED_FIELDS = {'percent_identity', 'eval', 'query_percent_alignment', 'subject_percent_alignment'}
+PFAM_ALLOWED_FIELDS = {'eval'}
+TIGRFAM_ALLOWED_FIELDS = {'eval'}
 
 """DB query related """
 
@@ -31,9 +38,12 @@ def checkDbName(database):
 
 def getDb(database, username=config.username, password=config.password, host=config.host, port=config.port):
     database = checkDbName(database)
-    _my_conv = {FIELD_TYPE.LONG: int, FIELD_TYPE.INT24: int}
-    conn = MySQLdb.connect(user=username, passwd=password, port=port,
-                           host=host, db=database, conv=_my_conv)
+    _my_conv = {FieldType.LONG: int, FieldType.INT24: int}
+    # conn = mysql.connector.connect(user=username, passwd=password, port=port,
+    #                        host=host, db=database, conv=_my_conv)
+
+    conn = mysql.connector.connect(user=username, passwd=password,
+                           host=host, db=database)
     return conn
 
 
@@ -50,9 +60,9 @@ def crossdomain(origin=None, methods=None, headers=None,
                 automatic_options=True):
     if methods is not None:
         methods = ', '.join(sorted(x.upper() for x in methods))
-    if headers is not None and not isinstance(headers, basestring):
+    if headers is not None and not isinstance(headers, str):
         headers = ', '.join(x.upper() for x in headers)
-    if not isinstance(origin, basestring):
+    if not isinstance(origin, str):
         origin = ', '.join(origin)
     if isinstance(max_age, timedelta):
         max_age = max_age.total_seconds()
@@ -117,7 +127,7 @@ def check_threshold(thresholds, allowed_fields):
         bad_fields = threshold_fields - allowed_fields
         raise Exception(str(list(bad_fields)) + " are not allowed in thresholds")
     try:
-        for i in xrange(len(thresholds)):
+        for i in range(len(thresholds)):
             thresholds[i]['value'] = float(thresholds[i]['value'])
     except Exception as e:
         raise Exception('Value should be a number')
@@ -370,10 +380,10 @@ def queryByTaxIds(database):
                 return make_error_response(msg='invalid tax ids in xml file', code=400)
     # handle csv file:
 
-    elif type(taxids[0]) == unicode:
+    elif type(taxids[0]) == str:
         for taxid in taxids:
 
-            if type(taxid) != unicode:
+            if type(taxid) != str:
                 return make_error_response(msg='invalid tax ids in csv file', code=400)
 
         result = getTaxIdsFromNames(conn,taxids)
@@ -488,7 +498,7 @@ def keggAutocomplete(database):
     if err_msg:
         return err_msg
     db = getDb(database)
-    c = db.cursor(MySQLdb.cursors.DictCursor)
+    c = db.cursor(dictionary=True)
     sql = """SELECT DISTINCT(h.kegg_id) AS keggId, c.definition AS description
     FROM (SELECT kegg_id, definition
 	      FROM kegg_definitions
@@ -500,6 +510,8 @@ def keggAutocomplete(database):
     searchPhrase = phrase.lower() + '%'  # so that it matches anything starting with `phrase`
     c.execute(sql, ['%' + searchPhrase, searchPhrase])
     rows = c.fetchall()
+    for r in rows:
+        print(r)
     return json.dumps(rows)
 
 
@@ -517,7 +529,7 @@ def tigrfamAutocomplete(database):
     if err_msg:
         return err_msg
     db = getDb(database)
-    c = db.cursor(MySQLdb.cursors.DictCursor)
+    c = db.cursor(dictionary=True)
     sql = """SELECT DISTINCT(c.tigrfam_id) AS tigrfamId, c.definition AS description
     FROM (SELECT tigrfam_id, definition
 	      FROM tigrfam_definitions
@@ -579,7 +591,7 @@ def _getPfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=False, 
             gtdb_clause=gtdb_clause,
             limit_clause=limit_clause,
             threshold_clause=threshold_clause)
-    c = db.cursor(MySQLdb.cursors.DictCursor)
+    c = db.cursor(dictionary=True)
     c.execute(sql, threshold_values)
     rows = c.fetchall()
     for r in rows:
@@ -650,7 +662,7 @@ def _getKeggResults(db, keggs, gtdb_ids, size_limit=None, with_sequence=False, t
         gtdb_clause=gtdb_clause,
         limit_clause=limit_clause,
         threshold_clause=threshold_clause)
-    c = db.cursor(MySQLdb.cursors.DictCursor)
+    c = db.cursor(dictionary=True)
     c.execute(sql, threshold_values)
     rows = c.fetchall()
 
@@ -743,7 +755,7 @@ def _getTigrfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=Fals
                 gtdb_clause=gtdb_clause,
                 limit_clause=limit_clause,
                 threshold_clause=threshold_clause)
-    c = db.cursor(MySQLdb.cursors.DictCursor)
+    c = db.cursor(dictionary=True)
     c.execute(sql, threshold_values)
     rows = c.fetchall()
     for r in rows:
@@ -924,11 +936,11 @@ def getVersion(database):
             FROM {db_name}.db_config_data_files
             WHERE config_param IN ('json_tree', 'pfamA_sql'); '''\
             .format(db_name=checkDbName(database))
-    c = db.cursor(MySQLdb.cursors.DictCursor)
+    c = db.cursor(dictionary=True)
     c.execute(sql)
     rows = c.fetchall()
     version_info = {}
-    print rows
+    print(rows)
     for r in rows:
         config_param = r['config_param']
         file_name = r['file_name']
@@ -945,11 +957,14 @@ def getVersion(database):
     return json.dumps(version_info)
 
 if __name__ == '__main__':
-    f = open('log.txt', 'a')
-    timestr = time.strftime("%Y.%m.%d-%H:%M:%S")
-    f.write(timestr+'\n')
-    f.write(sys.version)
-    f.write('running\n')
-    f.close()
+    # current_working_directory = os.getcwd()
+    # log_path = current_working_directory +'/log.txt'
+    # print(log_path)
+    # f = open(log_path, 'a')
+    # timestr = time.strftime("%Y.%m.%d-%H:%M:%S")
+    # f.write(timestr+'\n')
+    # f.write(sys.version)
+    # f.write('running\n')
+    # f.close()
 
-    app.run(host="0.0.0.0", port=5001, debug=True, threaded=True)
+    app.run(host="0.0.0.0", port=5050, debug=True, threaded=True)

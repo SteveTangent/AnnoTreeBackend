@@ -364,8 +364,11 @@ def queryByTaxIds(database):
     return json.dumps(getNodeIdFromTaxIds(_db, taxids))
     """
     _db = getDb(database)
-    conn = MySQLdb.connect(user=config.username, passwd=config.password, port=config.port,
+
+    conn = mysql.connector.connect(user=config.username, passwd=config.password, port=config.port,
                            host=config.host, db="names")
+    # conn = MySQLdb.connect(user=config.username, passwd=config.password, port=config.port,
+    #                        host=config.host, db="names")
     if request.json is None:
         abort(400)
         return
@@ -445,7 +448,9 @@ def pfamDomainAutocomplete(database):
     if err_msg:
         return err_msg
     db = getDb(database)
-    c = db.cursor(MySQLdb.cursors.DictCursor)
+
+    c = db.cursor(dictionary=True)
+    # c = db.cursor(MySQLdb.cursors.DictCursor)
     sql = """SELECT DISTINCT(c.pfamA_acc) AS pfamA_acc, c.description AS description, c.pfamA_id AS pfamA_id
     FROM (SELECT description, pfamA_acc, pfamA_id
 	      FROM pfamA
@@ -474,7 +479,8 @@ def taxonomyAutocomplete(database):
     if err_msg:
         return err_msg
     db = getDb(database)
-    c = db.cursor(MySQLdb.cursors.DictCursor)
+    c = db.cursor(dictionary=True)
+    # c = db.cursor(MySQLdb.cursors.DictCursor)
     sql = """SELECT ncbi_taxid as taxId, species FROM taxonomy WHERE LOWER(species)
     LIKE %s AND species NOT LIKE '%%virus%%' AND species NOT LIKE '%%phage%%'
     AND ncbi_taxid IN (SELECT species_id from node_species where species_id IS NOT NULL) LIMIT 10;"""

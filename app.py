@@ -15,7 +15,8 @@ from mysql.connector import FieldType
 # import MySQLdb
 # from MySQLdb.constants import FIELD_TYPE
 import config
-from tree_exporter import get_tree
+# from tree_exporter import get_tree
+from new_tree_exporter import get_tree
 import json
 import itertools
 

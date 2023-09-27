@@ -23,7 +23,7 @@ def get_rows(db):
                 r.cur_rank , t.taxonomy AS gtdbTaxonomy
             FROM node n
             LEFT JOIN node_gtdb_rank r ON r.node_id = n.node_id
-            LEFT JOIN node_taxonomy t ON t.gtdb_id = n.gtdb_id
+            LEFT JOIN taxonomy t ON t.gtdb_id = n.gtdb_id
             WHERE (r.is_highest = 1 OR r.node_id is NULL)
         """.format()
 

@@ -144,6 +144,37 @@ def _get_node_ids_from_tophits(db, top_hit_table, search_colname, search_ids, th
     search_id_quoted = (",".join(\
         ["'%s'" % (search_id) for search_id in search_ids]))
     search_clause = "%s IN (%s)" % (search_colname, search_id_quoted)
+
+    """
+    kegg should be kegg_id, pfam and tigrfam are subfamily of interpro, so it should be parsed separately
+    """
+    if search_colname == 'kegg_id':
+
+        sql = f"""
+        SELECT node_id
+FROM node n
+JOIN
+    (
+    SELECT
+        gtdb_id,
+        COUNT(DISTINCT kegg_id) AS num_hit_per_genome
+    FROM kegg_annotation
+    WHERE kegg_id in ({search_id_quoted})
+    GROUP BY gtdb_id
+    HAVING num_hit_per_genome >= {str(len(search_ids))}
+    ) g
+ON n.gtdb_id = g.gtdb_id
+"""
+        # print(sql)
+        c = db.cursor()
+        c.execute(sql)
+        rows = c.fetchall()
+        if not rows:  # no result
+            return []
+        node_ids = [r[0] for r in rows]
+        return sorted(node_ids)
+
+    print(search_clause)
     print(thresholds)
     threshold_clause, threshold_values = getThresholdClause(thresholds)
     sql = """
@@ -506,16 +537,33 @@ def keggAutocomplete(database):
         return err_msg
     db = getDb(database)
     c = db.cursor(dictionary=True)
-    sql = """SELECT DISTINCT(h.kegg_id) AS keggId, c.definition AS description
-    FROM (SELECT kegg_id, definition
-	      FROM kegg_definitions
-	      WHERE LOWER(definition) LIKE %s
-          OR LOWER(kegg_id) LIKE %s) AS c
-    INNER JOIN kegg_top_hits AS h
-    ON h.kegg_id = c.kegg_id
-    LIMIT 10;"""
-    searchPhrase = phrase.lower() + '%'  # so that it matches anything starting with `phrase`
-    c.execute(sql, ['%' + searchPhrase, searchPhrase])
+    # sql = """SELECT DISTINCT(h.kegg_id) AS keggId, c.definition AS description
+    # FROM (SELECT kegg_id, definition
+	#       FROM kegg_definitions
+	#       WHERE LOWER(definition) LIKE %s
+    #       OR LOWER(kegg_id) LIKE %s) AS c
+    # INNER JOIN kegg_top_hits AS h
+    # ON h.kegg_id = c.kegg_id
+    # LIMIT 10;"""
+#     sql = '''
+#     SELECT DISTINCT(kegg_id) AS keggId, kegg_definition AS description
+# FROM kegg_annotation
+# WHERE kegg_id LIKE %s
+# OR kegg_definition LIKE %s LIMIT 10
+#     '''
+    search_phrase_kegg = phrase.lower() + '%'
+    search_phrase_def = '%' + phrase.lower() + '%'
+    print(phrase)
+    sql = f'''
+        SELECT DISTINCT(kegg_id) AS keggId, kegg_definition AS description
+    FROM kegg_def
+    WHERE kegg_id LIKE '{search_phrase_kegg}' 
+    OR kegg_definition LIKE '{search_phrase_def}' LIMIT 10
+        '''
+    # print(sql)
+    # searchPhrase = phrase.lower() + '%'  # so that it matches anything starting with `phrase`
+    # c.execute(sql, ['%' + searchPhrase, searchPhrase])
+    c.execute(sql)
     rows = c.fetchall()
     for r in rows:
         print(r)

@@ -166,43 +166,66 @@ JOIN
 ON n.gtdb_id = g.gtdb_id
 """
         # print(sql)
-        c = db.cursor()
-        c.execute(sql)
-        rows = c.fetchall()
-        if not rows:  # no result
-            return []
-        node_ids = [r[0] for r in rows]
-        return sorted(node_ids)
+        # c = db.cursor()
+        # c.execute(sql)
+        # rows = c.fetchall()
+        # if not rows:  # no result
+        #     return []
+        # node_ids = [r[0] for r in rows]
+        # return sorted(node_ids)
+    elif search_colname == 'pfam_id':
+        sql = f'''
+SELECT node_id
+FROM node n
+JOIN(
+SELECT
+    c.gtdb_id, 
+    COUNT(DISTINCT p.member_id) AS num_hit_per_genome
+FROM 
+    cross_reference_db.protein_ipr p
+JOIN 
+    uniprot_annotation u ON p.uniprot_id = u.uniprot_id
+JOIN 
+    coordinates c ON u.gene_id = c.gene_id
+WHERE 
+    p.member_id in ({search_id_quoted})
+GROUP BY c.gtdb_id
+    HAVING num_hit_per_genome >= {str(len(search_ids))}
+    ) g
+ON n.gtdb_id = g.gtdb_id
+    '''
+    elif search_colname == 'tigrfam_id':
+        sql = f'''
+    SELECT node_id
+    FROM node n
+    JOIN(
+    SELECT
+        c.gtdb_id, 
+        COUNT(DISTINCT p.interpro_id) AS num_hit_per_genome
+    FROM 
+        cross_reference_db.protein_ipr p
+    JOIN 
+        uniprot_annotation u ON p.uniprot_id = u.uniprot_id
+    JOIN 
+        coordinates c ON u.gene_id = c.gene_id
+    WHERE 
+        p.interpro_id in ({search_id_quoted})
+    GROUP BY c.gtdb_id
+        HAVING num_hit_per_genome >= {str(len(search_ids))}
+        ) g
+    ON n.gtdb_id = g.gtdb_id
+        '''
 
-    print(search_clause)
-    print(thresholds)
-    threshold_clause, threshold_values = getThresholdClause(thresholds)
-    sql = """
-        SELECT node_id
-        FROM gtdb_node gn
-        JOIN
-            (
-            SELECT
-                gtdb_id,
-                COUNT(DISTINCT {search_colname}) AS num_hit_per_genome
-            FROM {top_hit_table}
-            WHERE {search_clause} {threshold_clause}
-            GROUP BY gtdb_id
-            HAVING num_hit_per_genome >= {ids_length}
-            ) g
-        ON gn.gtdb_id = g.gtdb_id
-        """.format(
-            ids_length = str(len(search_ids)),
-            top_hit_table=top_hit_table,
-            search_clause=search_clause,
-            search_colname=search_colname,
-            threshold_clause=threshold_clause)
+    # print(sql)
+
     c = db.cursor()
-    c.execute(sql, threshold_values)
+    # c.execute(sql, threshold_values)
+    c.execute(sql)
     rows = c.fetchall()
     if not rows:  # no result
         return []
     node_ids = [r[0] for r in rows]
+    # print(node_ids)
     return sorted(node_ids)
 
 def getNodeIdFromDomains(db, domains, thresholds=[]):
@@ -223,9 +246,19 @@ def getNodeIdFromTaxIds(db, taxids):
     return a [node_id ...]
     '''
     # find all child ncbi_taxid with parents taxids
-    sql = '''SELECT node_id FROM node_species WHERE species_id IN
-            (SELECT get_species(ncbi_taxid) FROM taxonomy WHERE ncbi_taxid IN (%s)
-            AND get_species(ncbi_taxid) != 1);''' % ','.join([str(t) for t in taxids])
+    # sql = '''SELECT node_id FROM node_species WHERE species_id IN
+    #         (SELECT get_species(ncbi_taxid) FROM taxonomy WHERE ncbi_taxid IN (%s)
+    #         AND get_species(ncbi_taxid) != 1);''' % ','.join([str(t) for t in taxids])
+
+
+    search_ids = ','.join([str(t) for t in taxids])
+    sql = f'''
+    SELECT node_id 
+FROM node AS n 
+JOIN ncbi_meta AS nm ON nm.accession = n.gtdb_id 
+WHERE nm.ncbi_taxid IN ({search_ids});
+'''
+    # print(sql)
     c = db.cursor()
     c.execute(sql)
     rows = c.fetchall()
@@ -237,7 +270,13 @@ def getTaxIdsFromNames(db, names):
     return a [taxids ...]
     '''
     # find all taxids using their corresponding scientific names in db
-    sql = 'SELECT taxid FROM names WHERE scientific_name IN (%s);' % ','.join(['"%s"' % str(n) for n in names])
+    # sql = 'SELECT taxid FROM names WHERE scientific_name IN (%s);' % ','.join(['"%s"' % str(n) for n in names])
+
+    search_names = ','.join(['"%s"' % str(n) for n in names])
+    sql = f'''
+    SELECT DISTINCT ncbi_taxid AS taxid FROM ncbi_meta WHERE ncbi_organism_name in ({search_names})
+    '''
+    # print(sql)
     c = db.cursor()
     c.execute(sql)
     rows = c.fetchall()
@@ -288,7 +327,12 @@ def allowCORSdomainsTigrfam(database):
     return True
 
 def isTigrfamId(text):
-    return bool(re.match('^TIGR\d{5}$', text))
+    '''
+    Steve:
+     change tigrfam to interpro
+    '''
+    # return bool(re.match('^TIGR\d{5}$', text))
+    return bool(re.match('^IPR\d{6}$', text))
 
 
 @app.route('/<database>/treeNodes/by/tigrfam', methods=['POST'])
@@ -300,6 +344,9 @@ def queryByTigrfam(database):
         domains: [<string>... ] where <string> is a
             pfam accession e.g. PF00123
     }
+
+    Steve add:
+    now support interpro instead of tigrfam
     """
     db = getDb(database)
     if not request.json:
@@ -311,7 +358,8 @@ def queryByTigrfam(database):
         return bad_request(msg='empty domains')
     for d in domains:
         if not isTigrfamId(d):
-            return bad_request(msg='%s is not a valid tigrfam id' % d)
+            # return bad_request(msg='%s is not a valid tigrfam id' % d)
+            return bad_request(msg='%s is not a valid interpro id' % d)
     thresholds = request.json.get('thresholds',[])
     try:
         check_threshold(thresholds, TIGRFAM_ALLOWED_FIELDS)
@@ -395,16 +443,22 @@ def queryByTaxIds(database):
 
     return json.dumps(getNodeIdFromTaxIds(_db, taxids))
     """
-    _db = getDb(database)
-
-    conn = mysql.connector.connect(user=config.username, passwd=config.password, port=config.port,
-                           host=config.host, db="names")
+    # _db = getDb(database)
+    # nodeId = request.json
+    # print(nodeId)
+    #
+    # return json.dumps(nodeId)
+    # conn = mysql.connector.connect(user=config.username, passwd=config.password, port=config.port,
+    #                        host=config.host, db="names")
     # conn = MySQLdb.connect(user=config.username, passwd=config.password, port=config.port,
     #                        host=config.host, db="names")
+
+    db = getDb(database)
     if request.json is None:
         abort(400)
         return
     taxids = request.json
+    print(taxids)
     if len(taxids) == 0:
         return json.dumps([])
 
@@ -421,11 +475,17 @@ def queryByTaxIds(database):
             if type(taxid) != str:
                 return make_error_response(msg='invalid tax ids in csv file', code=400)
 
-        result = getTaxIdsFromNames(conn,taxids)
+    #     result = getTaxIdsFromNames(conn,taxids)
+    #     result = [int(x) for x in result]
+    #     result = getNodeIdFromTaxIds(_db,result)
+    #     return json.dumps(result)
+    # return json.dumps(getNodeIdFromTaxIds(_db, taxids))
+
+        result = getTaxIdsFromNames(db,taxids)
         result = [int(x) for x in result]
-        result = getNodeIdFromTaxIds(_db,result)
+        result = getNodeIdFromTaxIds(db,result)
         return json.dumps(result)
-    return json.dumps(getNodeIdFromTaxIds(_db, taxids))
+    return json.dumps(getNodeIdFromTaxIds(db, taxids))
 
 # /*---------- END of query treenodes   ----------*/
 
@@ -483,16 +543,31 @@ def pfamDomainAutocomplete(database):
 
     c = db.cursor(dictionary=True)
     # c = db.cursor(MySQLdb.cursors.DictCursor)
-    sql = """SELECT DISTINCT(c.pfamA_acc) AS pfamA_acc, c.description AS description, c.pfamA_id AS pfamA_id
-    FROM (SELECT description, pfamA_acc, pfamA_id
-	      FROM pfamA
-	      WHERE LOWER(description) LIKE %s
-          OR LOWER(pfamA_acc) LIKE %s) AS c
-    INNER JOIN pfam_top_hits AS h
-    ON c.pfamA_acc = h.pfam_id
-    LIMIT 10;"""
+    # sql = """SELECT DISTINCT(c.pfamA_acc) AS pfamA_acc, c.description AS description, c.pfamA_id AS pfamA_id
+    # FROM (SELECT description, pfamA_acc, pfamA_id
+	#       FROM pfamA
+	#       WHERE LOWER(description) LIKE %s
+    #       OR LOWER(pfamA_acc) LIKE %s) AS c
+    # INNER JOIN pfam_top_hits AS h
+    # ON c.pfamA_acc = h.pfam_id
+    # LIMIT 10;"""
+    # print(phrase)
+    sql = '''
+        SELECT DISTINCT (p.member_id) AS pfamA_acc, p.description AS description
+FROM 
+    cross_reference_db.protein_ipr p
+JOIN 
+    uniprot_annotation u ON p.uniprot_id = u.uniprot_id
+JOIN 
+    coordinates c ON u.gene_id = c.gene_id
+WHERE 
+    p.member_id LIKE %s
+LIMIT 10;
+    '''
+
     searchPhrase = phrase.lower() + '%'  # so that it matches anything starting with `phrase`
-    c.execute(sql, ['%' + searchPhrase, searchPhrase])
+    # c.execute(sql, ['%' + searchPhrase, searchPhrase])
+    c.execute(sql, [searchPhrase])
     rows = c.fetchall()
     return json.dumps(rows)
 
@@ -513,11 +588,17 @@ def taxonomyAutocomplete(database):
     db = getDb(database)
     c = db.cursor(dictionary=True)
     # c = db.cursor(MySQLdb.cursors.DictCursor)
-    sql = """SELECT ncbi_taxid as taxId, species FROM taxonomy WHERE LOWER(species)
-    LIKE %s AND species NOT LIKE '%%virus%%' AND species NOT LIKE '%%phage%%'
-    AND ncbi_taxid IN (SELECT species_id from node_species where species_id IS NOT NULL) LIMIT 10;"""
-    searchPhrase = phrase.lower() + '%'  # so that it matches anything starting with `phrase`
-    c.execute(sql, [searchPhrase])
+    # sql = """SELECT ncbi_taxid as taxId, species FROM taxonomy WHERE LOWER(species)
+    # LIKE %s AND species NOT LIKE '%%virus%%' AND species NOT LIKE '%%phage%%'
+    # AND ncbi_taxid IN (SELECT species_id from node_species where species_id IS NOT NULL) LIMIT 10;"""
+
+    searchPhrase = '%' + phrase.lower() + '%'  # so that it matches anything starting with `phrase`
+    sql = f'''
+    SELECT ncbi_taxid AS taxId, ncbi_organism_name AS species
+    FROM ncbi_meta WHERE ncbi_organism_name LIKE '%{searchPhrase}%' LIMIT 10;
+    '''
+
+    c.execute(sql)
     rows = c.fetchall()
     return json.dumps(rows)
 
@@ -565,8 +646,8 @@ def keggAutocomplete(database):
     # c.execute(sql, ['%' + searchPhrase, searchPhrase])
     c.execute(sql)
     rows = c.fetchall()
-    for r in rows:
-        print(r)
+    # for r in rows:
+    #     print(r)
     return json.dumps(rows)
 
 
@@ -585,15 +666,31 @@ def tigrfamAutocomplete(database):
         return err_msg
     db = getDb(database)
     c = db.cursor(dictionary=True)
-    sql = """SELECT DISTINCT(c.tigrfam_id) AS tigrfamId, c.definition AS description
-    FROM (SELECT tigrfam_id, definition
-	      FROM tigrfam_definitions
-	      WHERE LOWER(tigrfam_id) LIKE %s OR
-	      LOWER(definition) LIKE %s) AS c
-    INNER JOIN tigrfam_top_hits AS h
-    ON c.tigrfam_id = h.tigrfam_id
-    LIMIT 10;"""
-    c.execute(sql, [phrase.lower() + '%', '%'+phrase.lower()+'%'])
+    # sql = """SELECT DISTINCT(c.tigrfam_id) AS tigrfamId, c.definition AS description
+    # FROM (SELECT tigrfam_id, definition
+	#       FROM tigrfam_definitions
+	#       WHERE LOWER(tigrfam_id) LIKE %s OR
+	#       LOWER(definition) LIKE %s) AS c
+    # INNER JOIN tigrfam_top_hits AS h
+    # ON c.tigrfam_id = h.tigrfam_id
+    # LIMIT 10;"""
+
+    sql = '''
+SELECT DISTINCT (p.interpro_id) AS tigrfamId, p.description AS description
+FROM 
+    cross_reference_db.protein_ipr p
+JOIN 
+    uniprot_annotation u ON p.uniprot_id = u.uniprot_id
+JOIN 
+    coordinates c ON u.gene_id = c.gene_id
+WHERE 
+    p.interpro_id LIKE %s
+LIMIT 10;
+        '''
+    # print(sql)
+    # c.execute(sql, [phrase.lower() + '%', '%'+phrase.lower()+'%'])
+
+    c.execute(sql, [phrase.lower() + '%'])
     rows = c.fetchall()
     return json.dumps(rows)
 
@@ -618,40 +715,50 @@ def _getPfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=False, 
     threshold_clause, threshold_values = getThresholdClause(thresholds)
     sql = ''
     if not with_sequence:
-        sql = '''
-        SELECT gtdb_id AS gtdbId, gene_id AS geneId,
-        pfam_id AS pfamId,eval,bitscore FROM pfam_top_hits
-        WHERE
-            pfam_id IN ({domain_clause}) AND gtdb_id IN ({gtdb_clause})
-            {threshold_clause}
-        {limit_clause}
-        ;
-        '''.format(domain_clause=domain_clause,
-            gtdb_clause=gtdb_clause,
-            limit_clause=limit_clause,
-            threshold_clause=threshold_clause)
+        sql = f'''
+            SELECT p.member_id AS pfamId, 
+            c.gtdb_id AS gtdbId,
+            c.gene_id AS geneId,
+            t.taxonomy AS tax
+        FROM 
+            cross_reference_db.protein_ipr p
+        JOIN 
+            uniprot_annotation u ON p.uniprot_id = u.uniprot_id
+        JOIN 
+            coordinates c ON u.gene_id = c.gene_id
+        JOIN
+        	taxonomy t ON c.gtdb_id = t.gtdb_id
+        WHERE 
+            p.member_id IN ({domain_clause}) AND c.gtdb_id IN ({gtdb_clause})
+            {limit_clause}
+                '''
     else:
-        sql = '''
-        SELECT pt.gtdb_id AS gtdbId, pt.gene_id AS geneId,
-        pt.pfam_id AS pfamId,pt.eval,pt.bitscore, ps.sequence
-        FROM pfam_top_hits pt
-        JOIN protein_sequences ps
-        ON pt.gene_id = ps.gene_id AND pt.gtdb_id = ps.gtdb_id
-        WHERE
-            pt.pfam_id IN ({domain_clause}) AND pt.gtdb_id IN ({gtdb_clause})
-            {threshold_clause}
-        {limit_clause}
-        ;
-        '''.format(domain_clause=domain_clause,
-            gtdb_clause=gtdb_clause,
-            limit_clause=limit_clause,
-            threshold_clause=threshold_clause)
+
+        sql = f'''
+    SELECT p.member_id AS pfamId, 
+    c.gtdb_id AS gtdbId,
+    c.gene_id AS geneId,
+    c.seq AS sequence,
+    t.taxonomy AS tax
+FROM 
+    cross_reference_db.protein_ipr p
+JOIN 
+    uniprot_annotation u ON p.uniprot_id = u.uniprot_id
+JOIN 
+    coordinates c ON u.gene_id = c.gene_id
+JOIN
+	taxonomy t ON c.gtdb_id = t.gtdb_id
+WHERE 
+    p.member_id IN ({domain_clause}) AND c.gtdb_id IN ({gtdb_clause})
+    {limit_clause}
+        '''
+    # print(sql)
     c = db.cursor(dictionary=True)
-    c.execute(sql, threshold_values)
+    c.execute(sql)
     rows = c.fetchall()
-    for r in rows:
-        r['eval'] = float(r['eval'])
-        r['bitscore'] = float(r['bitscore'])
+    # for r in rows:
+    #     r['eval'] = float(r['eval'])
+    #     r['bitscore'] = float(r['bitscore'])
     return rows
 
 
@@ -673,52 +780,64 @@ def _getKeggResults(db, keggs, gtdb_ids, size_limit=None, with_sequence=False, t
     gtdb_clause = ','.join(['\''+d+'\'' for d in gtdb_ids])
     limit_clause = (' LIMIT ' + str(min(int(size_limit), 999999))) if size_limit else ''
     threshold_clause, threshold_values = getThresholdClause(thresholds)
+    # print(db)
+    # print(kegg_clause,gtdb_clause)
+    # print(with_sequence)
     sql = ''
     if not with_sequence:
         sql = '''
-        SELECT GROUP_CONCAT(kegg_id SEPARATOR '&') AS keggId, gene_id AS geneId,
-        gtdb_id AS gtdbId,eval,bitscore,
-        kt.percent_identity AS percentIdentity, kt.query_percent_alignment AS queryPercentAlignment,
-        kt.subject_percent_alignment AS subjectPercentAlignment,
-	nt.gtdb_taxonomy AS taxonomy
-        FROM kegg_top_hits kt
-	JOIN node_tax nt
-	ON nt.gtdb_id = kt.gtdb_id
+                SELECT 
+            GROUP_CONCAT(ka.kegg_id SEPARATOR '&') AS keggId, 
+            ka.gene_id AS geneId,
+            ka.gtdb_id AS gtdbId,
+            t.taxonomy AS tax
+        FROM 
+            kegg_annotation ka
+        JOIN 
+            taxonomy t ON t.gtdb_id = ka.gtdb_id
         WHERE
-            kegg_id IN ({kegg_clause}) AND gtdb_id IN ({gtdb_clause})
-            {threshold_clause}
-        GROUP BY 2,3,4,5,6,7,8
-        {limit_clause}
-        ;
-        '''.format(kegg_clause=kegg_clause,
-            gtdb_clause=gtdb_clause,
-            limit_clause=limit_clause,
-            threshold_clause=threshold_clause)
+            ka.kegg_id IN ({kegg_clause}) 
+        AND 
+            ka.gtdb_id IN (
+               {gtdb_clause}
+            )
+        GROUP BY 
+            ka.gene_id,ka.gtdb_id,t.taxonomy
+        {limit_clause};
+                '''.format(kegg_clause=kegg_clause,
+                           gtdb_clause=gtdb_clause,
+                           limit_clause=limit_clause)
     else:
         sql = '''
-        SELECT GROUP_CONCAT(kt.kegg_id SEPARATOR '&') AS keggId, kt.gene_id AS geneId,
-        kt.gtdb_id AS gtdbId,kt.eval,kt.bitscore,
-        kt.percent_identity AS percentIdentity, kt.query_percent_alignment AS queryPercentAlignment,
-        kt.subject_percent_alignment AS subjectPercentAlignment,
-        ps.sequence,
-	nt.gtdb_taxonomy AS taxonomy
-        FROM kegg_top_hits kt
-        JOIN protein_sequences ps
-        ON kt.gene_id = ps.gene_id AND kt.gtdb_id = ps.gtdb_id
-	JOIN node_tax nt
-	ON nt.gtdb_id = kt.gtdb_id
-        WHERE
-            kt.kegg_id IN ({kegg_clause}) AND kt.gtdb_id IN ({gtdb_clause})
-            {threshold_clause}
-        GROUP BY 2,3,4,5,6,7,8,9
-        {limit_clause}
-        ;
+        SELECT 
+    GROUP_CONCAT(ka.kegg_id SEPARATOR '&') AS keggId, 
+    ka.gene_id AS geneId,
+    ka.gtdb_id AS gtdbId,
+    t.taxonomy AS tax,
+    c.seq AS sequence
+FROM 
+    kegg_annotation ka
+JOIN 
+    taxonomy t ON t.gtdb_id = ka.gtdb_id
+JOIN 
+    coordinates c ON c.gtdb_id = ka.gtdb_id
+WHERE
+    ka.kegg_id IN ({kegg_clause}) 
+AND 
+    ka.gtdb_id IN (
+       {gtdb_clause}
+    )
+GROUP BY 
+    ka.gene_id,ka.gtdb_id,t.taxonomy,c.seq
+{limit_clause};
         '''.format(kegg_clause=kegg_clause,
-        gtdb_clause=gtdb_clause,
-        limit_clause=limit_clause,
-        threshold_clause=threshold_clause)
+                   gtdb_clause=gtdb_clause,
+                   limit_clause=limit_clause)
+
+
     c = db.cursor(dictionary=True)
-    c.execute(sql, threshold_values)
+    # c.execute(sql, threshold_values)
+    c.execute(sql)
     rows = c.fetchall()
 
     data_tuple = []
@@ -727,15 +846,17 @@ def _getKeggResults(db, keggs, gtdb_ids, size_limit=None, with_sequence=False, t
         data['keggId'] = r['keggId']
         data['geneId'] = r['geneId']
         data['gtdbId'] = r['gtdbId']
-        data['eval'] = float(r['eval'])
-        data['bitscore'] = float(r['bitscore'])
-        data['percentIdentity'] = float(r['percentIdentity'])
-        data['subjectPercentAlignment'] = float(r['subjectPercentAlignment'])
+        # data['eval'] = float(r['eval'])
+        # data['bitscore'] = float(r['bitscore'])
+        # data['percentIdentity'] = float(r['percentIdentity'])
+        # data['subjectPercentAlignment'] = float(r['subjectPercentAlignment'])
         if with_sequence:
             data['sequence'] = r['sequence']
 
-        if r['taxonomy']:
-            for tax in r['taxonomy'].split(';'):
+        # if r['taxonomy']:
+        if r['tax']:
+            # for tax in r['taxonomy'].split(';'):
+            for tax in r['tax'].split(';'):
                 tax_arr = tax.split('__')
                 if tax_arr[0] == 'd':
                     data['db'] = tax_arr[1]
@@ -782,40 +903,49 @@ def _getTigrfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=Fals
     threshold_clause, threshold_values = getThresholdClause(thresholds)
     sql = ''
     if not with_sequence:
-        sql = '''
-        SELECT gtdb_id AS gtdbId, gene_id AS geneId,
-        tigrfam_id AS tigrfamId,eval,bitscore FROM tigrfam_top_hits
-        WHERE
-            tigrfam_id IN ({domain_clause}) AND gtdb_id IN ({gtdb_clause})
-            {threshold_clause}
-        {limit_clause}
-        ;
-        '''.format(domain_clause=domain_clause,
-                gtdb_clause=gtdb_clause,
-                limit_clause=limit_clause,
-                threshold_clause=threshold_clause)
+        sql = f'''
+            SELECT p.interpro_id AS pfamId, 
+            c.gtdb_id AS gtdbId,
+            c.gene_id AS geneId,
+            t.taxonomy AS tax
+        FROM 
+            cross_reference_db.protein_ipr p
+        JOIN 
+            uniprot_annotation u ON p.uniprot_id = u.uniprot_id
+        JOIN 
+            coordinates c ON u.gene_id = c.gene_id
+        JOIN
+        	taxonomy t ON c.gtdb_id = t.gtdb_id
+        WHERE 
+            p.interpro_id IN ({domain_clause}) AND c.gtdb_id IN ({gtdb_clause})
+            {limit_clause}
+                '''
     else:
-        sql = '''
-        SELECT top_hits.gtdb_id AS gtdbId, top_hits.gene_id AS geneId,
-        top_hits.tigrfam_id AS tigrfamId,top_hits.eval,top_hits.bitscore, ps.sequence
-        FROM tigrfam_top_hits top_hits
-        JOIN protein_sequences ps
-        ON top_hits.gene_id = ps.gene_id AND top_hits.gtdb_id = ps.gtdb_id
-        WHERE
-            top_hits.tigrfam_id IN ({domain_clause}) AND top_hits.gtdb_id IN ({gtdb_clause})
-            {threshold_clause}
-        {limit_clause}
-        ;
-        '''.format(domain_clause=domain_clause,
-                gtdb_clause=gtdb_clause,
-                limit_clause=limit_clause,
-                threshold_clause=threshold_clause)
+
+        sql = f'''
+            SELECT p.interpro_id AS pfamId, 
+            c.gtdb_id AS gtdbId,
+            c.gene_id AS geneId,
+            c.seq AS sequence,
+            t.taxonomy AS tax
+        FROM 
+            cross_reference_db.protein_ipr p
+        JOIN 
+            uniprot_annotation u ON p.uniprot_id = u.uniprot_id
+        JOIN 
+            coordinates c ON u.gene_id = c.gene_id
+        JOIN
+        	taxonomy t ON c.gtdb_id = t.gtdb_id
+        WHERE 
+            p.interpro_id IN ({domain_clause}) AND c.gtdb_id IN ({gtdb_clause})
+            {limit_clause}
+                '''
     c = db.cursor(dictionary=True)
-    c.execute(sql, threshold_values)
+    c.execute(sql)
     rows = c.fetchall()
-    for r in rows:
-        r['eval'] = float(r['eval'])
-        r['bitscore'] = float(r['bitscore'])
+    # for r in rows:
+    #     r['eval'] = float(r['eval'])
+    #     r['bitscore'] = float(r['bitscore'])
     return rows
 
 

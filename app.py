@@ -115,6 +115,7 @@ def getThresholdClause(thresholds):
     threshold_values = [th['value'] for th in thresholds]
     return (threshold_clause, threshold_values)
 
+
 def check_threshold(thresholds, allowed_fields):
     if type(thresholds) != list:
         raise Exception("thresholds must be a list")
@@ -141,91 +142,109 @@ def _get_node_ids_from_tophits(db, top_hit_table, search_colname, search_ids, th
     where genomes must contain all search_ids, and each hit
     must have scores satisfying `thresholds`
     """
+    # print(search_ids,search_colname)
     search_id_quoted = (",".join(\
         ["'%s'" % (search_id) for search_id in search_ids]))
     search_clause = "%s IN (%s)" % (search_colname, search_id_quoted)
 
+
     """
     kegg should be kegg_id, pfam and tigrfam are subfamily of interpro, so it should be parsed separately
+    node_list is a list of sets, we search each individual id first, and then use python to find the intersection
+    among sets
     """
-    if search_colname == 'kegg_id':
-
-        sql = f"""
-        SELECT node_id
-FROM node n
-JOIN
-    (
-    SELECT
-        gtdb_id,
-        COUNT(DISTINCT kegg_id) AS num_hit_per_genome
-    FROM kegg_annotation
-    WHERE kegg_id in ({search_id_quoted})
-    GROUP BY gtdb_id
-    HAVING num_hit_per_genome >= {str(len(search_ids))}
-    ) g
-ON n.gtdb_id = g.gtdb_id
-"""
-        # print(sql)
-        # c = db.cursor()
-        # c.execute(sql)
-        # rows = c.fetchall()
-        # if not rows:  # no result
-        #     return []
-        # node_ids = [r[0] for r in rows]
-        # return sorted(node_ids)
-    elif search_colname == 'pfam_id':
-        sql = f'''
-SELECT node_id
-FROM node n
-JOIN(
-SELECT
-    c.gtdb_id, 
-    COUNT(DISTINCT p.member_id) AS num_hit_per_genome
-FROM 
-    cross_reference_db.protein_ipr p
-JOIN 
-    uniprot_annotation u ON p.uniprot_id = u.uniprot_id
-JOIN 
-    coordinates c ON u.gene_id = c.gene_id
-WHERE 
-    p.member_id in ({search_id_quoted})
-GROUP BY c.gtdb_id
-    HAVING num_hit_per_genome >= {str(len(search_ids))}
-    ) g
-ON n.gtdb_id = g.gtdb_id
-    '''
-    elif search_colname == 'tigrfam_id':
-        sql = f'''
-    SELECT node_id
-    FROM node n
-    JOIN(
-    SELECT
-        c.gtdb_id, 
-        COUNT(DISTINCT p.interpro_id) AS num_hit_per_genome
-    FROM 
-        cross_reference_db.protein_ipr p
-    JOIN 
-        uniprot_annotation u ON p.uniprot_id = u.uniprot_id
-    JOIN 
-        coordinates c ON u.gene_id = c.gene_id
-    WHERE 
-        p.interpro_id in ({search_id_quoted})
-    GROUP BY c.gtdb_id
-        HAVING num_hit_per_genome >= {str(len(search_ids))}
-        ) g
-    ON n.gtdb_id = g.gtdb_id
-        '''
-
-    # print(sql)
-
+    node_list = []
     c = db.cursor()
-    # c.execute(sql, threshold_values)
-    c.execute(sql)
-    rows = c.fetchall()
-    if not rows:  # no result
-        return []
-    node_ids = [r[0] for r in rows]
+    for each_id in search_ids:
+        sql = ""
+
+        if search_colname == 'kegg_id':
+            sql = f'''
+            SELECT distinct ka.node_id
+            FROM kegg_annotation ka
+            WHERE ka.kegg_id = "{each_id}";
+            '''
+        elif search_colname == 'pfam_id':
+            sql = f'''
+            SELECT distinct ia.node_id
+            FROM interpro_annotation ia
+            WHERE ia.member_id = "{each_id}";
+            '''
+        elif search_colname == 'tigrfam_id':
+            sql = f'''
+            SELECT distinct ia.node_id
+            FROM interpro_annotation ia
+            WHERE ia.member_id = "{each_id}";
+            '''
+
+        # c.execute(sql, threshold_values)
+        c.execute(sql)
+        rows = c.fetchall()
+        cur_set = set([x[0] for x in rows])
+        node_list.append(cur_set)
+
+    intersection = set.intersection(*node_list)
+
+#     if search_colname == 'kegg_id':
+#         sql = f"""
+#         SELECT node_id
+# FROM node n
+# JOIN
+#     (
+#     SELECT
+#         gtdb_id,
+#         COUNT(DISTINCT kegg_id) AS num_hit_per_genome
+#     FROM kegg_annotation
+#     WHERE kegg_id in ({search_id_quoted})
+#     GROUP BY gtdb_id
+#     HAVING num_hit_per_genome >= {str(len(search_ids))}
+#     ) g
+# ON n.gtdb_id = g.gtdb_id
+# """
+#     elif search_colname == 'pfam_id':
+#         sql = f'''
+# SELECT node_id
+# FROM node n
+# JOIN(
+# SELECT
+#     ia.gtdb_id,
+#     COUNT(DISTINCT ia.member_id) AS num_hit_per_genome
+# FROM
+#     interpro_annotation ia
+# WHERE ia.member_id in ({search_id_quoted})
+# GROUP BY ia.gtdb_id
+# HAVING num_hit_per_genome >= {str(len(search_ids))}
+#     ) g
+# ON n.gtdb_id = g.gtdb_id
+#     '''
+#     elif search_colname == 'tigrfam_id':
+#
+#         sql = f'''
+# SELECT node_id
+# FROM node n
+# JOIN(
+# SELECT
+#     ia.gtdb_id,
+#     COUNT(DISTINCT ia.interpro_id) AS num_hit_per_genome
+# FROM
+#     interpro_annotation ia
+# WHERE ia.interpro_id in ({search_id_quoted})
+# GROUP BY ia.gtdb_id
+# HAVING num_hit_per_genome >= {str(len(search_ids))}
+#     ) g
+# ON n.gtdb_id = g.gtdb_id
+#     '''
+#
+#     print(sql)
+
+    # c = db.cursor()
+    # c.execute(sql)
+    # rows = c.fetchall()
+    # if not rows:  # no result
+    #     return []
+    # node_ids = [r[0] for r in rows]
     # print(node_ids)
+    node_ids = list(intersection)
     return sorted(node_ids)
 
 def getNodeIdFromDomains(db, domains, thresholds=[]):
@@ -331,8 +350,8 @@ def isTigrfamId(text):
     Steve:
      change tigrfam to interpro
     '''
-    # return bool(re.match('^TIGR\d{5}$', text))
-    return bool(re.match('^IPR\d{6}$', text))
+    return bool(re.match('^TIGR\d{5}$', text))
+    # return bool(re.match('^IPR\d{6}$', text))
 
 
 @app.route('/<database>/treeNodes/by/tigrfam', methods=['POST'])
@@ -358,8 +377,8 @@ def queryByTigrfam(database):
         return bad_request(msg='empty domains')
     for d in domains:
         if not isTigrfamId(d):
-            # return bad_request(msg='%s is not a valid tigrfam id' % d)
-            return bad_request(msg='%s is not a valid interpro id' % d)
+            return bad_request(msg='%s is not a valid tigrfam id' % d)
+            # return bad_request(msg='%s is not a valid interpro id' % d)
     thresholds = request.json.get('thresholds',[])
     try:
         check_threshold(thresholds, TIGRFAM_ALLOWED_FIELDS)
@@ -458,7 +477,7 @@ def queryByTaxIds(database):
         abort(400)
         return
     taxids = request.json
-    print(taxids)
+    # print(taxids)
     if len(taxids) == 0:
         return json.dumps([])
 
@@ -551,23 +570,30 @@ def pfamDomainAutocomplete(database):
     # INNER JOIN pfam_top_hits AS h
     # ON c.pfamA_acc = h.pfam_id
     # LIMIT 10;"""
-    # print(phrase)
-    sql = '''
-        SELECT DISTINCT (p.member_id) AS pfamA_acc, p.description AS description
-FROM 
-    cross_reference_db.protein_ipr p
-JOIN 
-    uniprot_annotation u ON p.uniprot_id = u.uniprot_id
-JOIN 
-    coordinates c ON u.gene_id = c.gene_id
-WHERE 
-    p.member_id LIKE %s
-LIMIT 10;
-    '''
+    print(phrase)
+
+    if len(phrase) < 2:
+        return jsonify([])
+
+    sql = ""
+    if len(phrase) >= 2 and phrase[:2].lower() == 'pf':
+        sql = f'''
+            SELECT DISTINCT(member_id) AS pfamA_acc, id.description AS description
+            FROM interpro_def id
+            WHERE member_id LIKE '{phrase}%' LIMIT 10
+        '''
+    else:
+
+        sql = f'''
+            SELECT DISTINCT(member_id) AS pfamA_acc, id.description AS description
+            FROM interpro_def id
+            WHERE member_id LIKE 'PF%' AND id.description LIKE '%{phrase}%' LIMIT 10
+        '''
 
     searchPhrase = phrase.lower() + '%'  # so that it matches anything starting with `phrase`
     # c.execute(sql, ['%' + searchPhrase, searchPhrase])
-    c.execute(sql, [searchPhrase])
+    # c.execute(sql, [searchPhrase])
+    c.execute(sql)
     rows = c.fetchall()
     return json.dumps(rows)
 
@@ -674,23 +700,27 @@ def tigrfamAutocomplete(database):
     # INNER JOIN tigrfam_top_hits AS h
     # ON c.tigrfam_id = h.tigrfam_id
     # LIMIT 10;"""
+    # if len(phrase) < 3:
+    #     return jsonify([])
 
-    sql = '''
-SELECT DISTINCT (p.interpro_id) AS tigrfamId, p.description AS description
-FROM 
-    cross_reference_db.protein_ipr p
-JOIN 
-    uniprot_annotation u ON p.uniprot_id = u.uniprot_id
-JOIN 
-    coordinates c ON u.gene_id = c.gene_id
-WHERE 
-    p.interpro_id LIKE %s
-LIMIT 10;
+    sql = ""
+    if len(phrase) >= 4 and phrase[:4].lower() == 'tigr':
+        sql = f'''
+            SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
+            FROM interpro_def id
+            WHERE member_id LIKE '{phrase}%' LIMIT 10
+        '''
+    else:
+        sql = f'''
+            SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
+            FROM interpro_def id
+            WHERE member_id LIKE 'tigr%' AND id.description LIKE '%{phrase}%' LIMIT 10
         '''
     # print(sql)
     # c.execute(sql, [phrase.lower() + '%', '%'+phrase.lower()+'%'])
 
-    c.execute(sql, [phrase.lower() + '%'])
+    # c.execute(sql, [phrase.lower() + '%'])
+    c.execute(sql)
     rows = c.fetchall()
     return json.dumps(rows)
 
@@ -716,43 +746,37 @@ def _getPfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=False, 
     sql = ''
     if not with_sequence:
         sql = f'''
-            SELECT p.member_id AS pfamId, 
-            c.gtdb_id AS gtdbId,
-            c.gene_id AS geneId,
-            t.taxonomy AS tax
-        FROM 
-            cross_reference_db.protein_ipr p
-        JOIN 
-            uniprot_annotation u ON p.uniprot_id = u.uniprot_id
-        JOIN 
-            coordinates c ON u.gene_id = c.gene_id
-        JOIN
-        	taxonomy t ON c.gtdb_id = t.gtdb_id
-        WHERE 
-            p.member_id IN ({domain_clause}) AND c.gtdb_id IN ({gtdb_clause})
-            {limit_clause}
-                '''
+    SELECT ia.member_id AS pfamId, 
+    ia.gtdb_id AS gtdbId,
+    ia.gene_id AS geneId,
+    t.taxonomy AS tax
+FROM 
+    interpro_annotation ia 
+JOIN
+	taxonomy t ON ia.gtdb_id = t.gtdb_id
+WHERE 
+    ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
+    {limit_clause}
+        '''
     else:
 
         sql = f'''
-    SELECT p.member_id AS pfamId, 
-    c.gtdb_id AS gtdbId,
-    c.gene_id AS geneId,
+    SELECT ia.member_id AS pfamId, 
+    ia.gtdb_id AS gtdbId,
+    ia.gene_id AS geneId,
     c.seq AS sequence,
     t.taxonomy AS tax
 FROM 
-    cross_reference_db.protein_ipr p
+    interpro_annotation ia 
 JOIN 
-    uniprot_annotation u ON p.uniprot_id = u.uniprot_id
-JOIN 
-    coordinates c ON u.gene_id = c.gene_id
+    coordinates c ON ia.gene_id = c.gene_id
 JOIN
-	taxonomy t ON c.gtdb_id = t.gtdb_id
+	taxonomy t ON ia.gtdb_id = t.gtdb_id
 WHERE 
-    p.member_id IN ({domain_clause}) AND c.gtdb_id IN ({gtdb_clause})
+    ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
     {limit_clause}
         '''
-    # print(sql)
+
     c = db.cursor(dictionary=True)
     c.execute(sql)
     rows = c.fetchall()
@@ -782,12 +806,13 @@ def _getKeggResults(db, keggs, gtdb_ids, size_limit=None, with_sequence=False, t
     threshold_clause, threshold_values = getThresholdClause(thresholds)
     # print(db)
     # print(kegg_clause,gtdb_clause)
+    # print('limit',limit_clause)
     # print(with_sequence)
     sql = ''
     if not with_sequence:
         sql = '''
                 SELECT 
-            GROUP_CONCAT(ka.kegg_id SEPARATOR '&') AS keggId, 
+            ka.kegg_id AS keggId, 
             ka.gene_id AS geneId,
             ka.gtdb_id AS gtdbId,
             t.taxonomy AS tax
@@ -801,39 +826,59 @@ def _getKeggResults(db, keggs, gtdb_ids, size_limit=None, with_sequence=False, t
             ka.gtdb_id IN (
                {gtdb_clause}
             )
-        GROUP BY 
-            ka.gene_id,ka.gtdb_id,t.taxonomy
         {limit_clause};
                 '''.format(kegg_clause=kegg_clause,
                            gtdb_clause=gtdb_clause,
                            limit_clause=limit_clause)
     else:
-        sql = '''
-        SELECT 
-    GROUP_CONCAT(ka.kegg_id SEPARATOR '&') AS keggId, 
-    ka.gene_id AS geneId,
-    ka.gtdb_id AS gtdbId,
-    t.taxonomy AS tax,
-    c.seq AS sequence
-FROM 
-    kegg_annotation ka
-JOIN 
-    taxonomy t ON t.gtdb_id = ka.gtdb_id
-JOIN 
-    coordinates c ON c.gtdb_id = ka.gtdb_id
-WHERE
-    ka.kegg_id IN ({kegg_clause}) 
-AND 
-    ka.gtdb_id IN (
-       {gtdb_clause}
-    )
-GROUP BY 
-    ka.gene_id,ka.gtdb_id,t.taxonomy,c.seq
-{limit_clause};
-        '''.format(kegg_clause=kegg_clause,
-                   gtdb_clause=gtdb_clause,
-                   limit_clause=limit_clause)
-
+#         sql = '''
+#         SELECT
+#     GROUP_CONCAT(ka.kegg_id SEPARATOR '&') AS keggId,
+#     ka.gene_id AS geneId,
+#     ka.gtdb_id AS gtdbId,
+#     t.taxonomy AS tax,
+#     c.seq AS sequence
+# FROM
+#     kegg_annotation ka
+# JOIN
+#     taxonomy t ON t.gtdb_id = ka.gtdb_id
+# JOIN
+#     coordinates c ON c.gtdb_id = ka.gtdb_id
+# WHERE
+#     ka.kegg_id IN ({kegg_clause})
+# AND
+#     ka.gtdb_id IN (
+#        {gtdb_clause}
+#     )
+# # GROUP BY
+# #     ka.gene_id,ka.gtdb_id,t.taxonomy,c.seq
+# {limit_clause};
+#         '''.format(kegg_clause=kegg_clause,
+#                    gtdb_clause=gtdb_clause,
+#                    limit_clause=limit_clause)
+            sql = '''
+                SELECT 
+            ka.kegg_id AS keggId, 
+            ka.gene_id AS geneId,
+            ka.gtdb_id AS gtdbId,
+            t.taxonomy AS tax,
+            c.seq AS sequence
+        FROM 
+            kegg_annotation ka
+        JOIN 
+            taxonomy t ON t.gtdb_id = ka.gtdb_id
+        JOIN 
+            coordinates c ON c.gtdb_id = ka.gtdb_id
+        WHERE
+            ka.kegg_id IN ({kegg_clause}) 
+        AND 
+            ka.gtdb_id IN (
+               {gtdb_clause}
+            )
+        {limit_clause};
+                '''.format(kegg_clause=kegg_clause,
+                           gtdb_clause=gtdb_clause,
+                           limit_clause=limit_clause)
 
     c = db.cursor(dictionary=True)
     # c.execute(sql, threshold_values)
@@ -904,40 +949,34 @@ def _getTigrfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=Fals
     sql = ''
     if not with_sequence:
         sql = f'''
-            SELECT p.interpro_id AS pfamId, 
-            c.gtdb_id AS gtdbId,
-            c.gene_id AS geneId,
+        SELECT ia.member_id AS tigrfamId, 
+            ia.gtdb_id AS gtdbId,
+            ia.gene_id AS geneId,
             t.taxonomy AS tax
         FROM 
-            cross_reference_db.protein_ipr p
-        JOIN 
-            uniprot_annotation u ON p.uniprot_id = u.uniprot_id
-        JOIN 
-            coordinates c ON u.gene_id = c.gene_id
+            interpro_annotation ia 
         JOIN
-        	taxonomy t ON c.gtdb_id = t.gtdb_id
+            taxonomy t ON ia.gtdb_id = t.gtdb_id
         WHERE 
-            p.interpro_id IN ({domain_clause}) AND c.gtdb_id IN ({gtdb_clause})
+            ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
             {limit_clause}
                 '''
     else:
 
         sql = f'''
-            SELECT p.interpro_id AS pfamId, 
-            c.gtdb_id AS gtdbId,
-            c.gene_id AS geneId,
+        SELECT ia.member_id AS tigrfamId, 
+            ia.gtdb_id AS gtdbId,
+            ia.gene_id AS geneId,
             c.seq AS sequence,
             t.taxonomy AS tax
         FROM 
-            cross_reference_db.protein_ipr p
+            interpro_annotation ia 
         JOIN 
-            uniprot_annotation u ON p.uniprot_id = u.uniprot_id
-        JOIN 
-            coordinates c ON u.gene_id = c.gene_id
+            coordinates c ON ia.gene_id = c.gene_id
         JOIN
-        	taxonomy t ON c.gtdb_id = t.gtdb_id
+            taxonomy t ON ia.gtdb_id = t.gtdb_id
         WHERE 
-            p.interpro_id IN ({domain_clause}) AND c.gtdb_id IN ({gtdb_clause})
+            ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
             {limit_clause}
                 '''
     c = db.cursor(dictionary=True)
@@ -1125,7 +1164,7 @@ def getVersion(database):
     c.execute(sql)
     rows = c.fetchall()
     version_info = {}
-    print(rows)
+    # print(rows)
     for r in rows:
         config_param = r['config_param']
         file_name = r['file_name']

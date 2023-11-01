@@ -376,7 +376,8 @@ def queryByTigrfam(database):
     if not domains or len(domains) == 0:
         return bad_request(msg='empty domains')
     for d in domains:
-        if not isTigrfamId(d):
+        # if not isTigrfamId(d):
+        if not check_if_valid_id(d):
             return bad_request(msg='%s is not a valid tigrfam id' % d)
             # return bad_request(msg='%s is not a valid interpro id' % d)
     thresholds = request.json.get('thresholds',[])
@@ -477,7 +478,7 @@ def queryByTaxIds(database):
         abort(400)
         return
     taxids = request.json
-    # print(taxids)
+    print(taxids)
     if len(taxids) == 0:
         return json.dumps([])
 
@@ -682,6 +683,33 @@ def keggAutocomplete(database):
 def allowTigrfamCORSAutocomplete(database):
     return True
 
+# dictionary: prefix,database_name
+member_prefix = {
+    'PF': 'Pfam',
+    'PTHR': 'PANTHER',
+    'G3DSA:': 'CATH-Gene3D',
+    'cd': 'CDD',
+    'MF_': 'HAMAP',
+    'TIGR': 'NCBIfam',
+    'PIRSF': 'PIRSF',
+    'PR': 'PRINTS',
+    'PS': 'PROSITE',
+    'SFLDF': 'SFLD',
+    'SM': 'SMART',
+    'SSF': 'SUPERFAMILY',
+    'NF': 'NCBIfam'
+}
+
+def check_if_valid_id(cur_phrase):
+    cur_phrase = cur_phrase.lower()
+    prefix_list = member_prefix.keys()
+    for prefix in prefix_list:
+        cur_prefix = prefix.lower()
+        # print(cur_prefix,cur_phrase)
+        # if cur_phrase.startswith(cur_prefix) and cur_phrase[len(cur_prefix)].isdigit():
+        if cur_phrase.startswith(cur_prefix):
+            return member_prefix[prefix]
+    return ''
 
 @app.route('/<database>/tigrfam/autocomplete', methods=['GET'])
 @crossdomain(origin='*', headers=['content-type', 'accept'])
@@ -693,35 +721,51 @@ def tigrfamAutocomplete(database):
     db = getDb(database)
     c = db.cursor(dictionary=True)
     # sql = """SELECT DISTINCT(c.tigrfam_id) AS tigrfamId, c.definition AS description
-    # FROM (SELECT tigrfam_id, definition
-	#       FROM tigrfam_definitions
-	#       WHERE LOWER(tigrfam_id) LIKE %s OR
-	#       LOWER(definition) LIKE %s) AS c
-    # INNER JOIN tigrfam_top_hits AS h
-    # ON c.tigrfam_id = h.tigrfam_id
-    # LIMIT 10;"""
-    # if len(phrase) < 3:
-    #     return jsonify([])
 
     sql = ""
-    if len(phrase) >= 4 and phrase[:4].lower() == 'tigr':
+    # if len(phrase) >= 4 and phrase[:4].lower() == 'tigr':
+    #     sql = f'''
+    #         SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
+    #         FROM interpro_def id
+    #         WHERE member_id LIKE '{phrase}%' LIMIT 10
+    #     '''
+    # else:
+    #     sql = f'''
+    #         SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
+    #         FROM interpro_def id
+    #         WHERE member_id LIKE 'tigr%' AND id.description LIKE '%{phrase}%' LIMIT 10
+    #     '''
+
+    # print(phrase)
+    cur_database = check_if_valid_id(phrase)
+    if len(cur_database) != 0:
         sql = f'''
             SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
             FROM interpro_def id
-            WHERE member_id LIKE '{phrase}%' LIMIT 10
+            WHERE member_id LIKE '{phrase}%' LIMIT 15
         '''
     else:
         sql = f'''
             SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
             FROM interpro_def id
-            WHERE member_id LIKE 'tigr%' AND id.description LIKE '%{phrase}%' LIMIT 10
+            WHERE id.description LIKE '%{phrase}%' LIMIT 15
         '''
+
+
+
+
     # print(sql)
     # c.execute(sql, [phrase.lower() + '%', '%'+phrase.lower()+'%'])
 
-    # c.execute(sql, [phrase.lower() + '%'])
     c.execute(sql)
     rows = c.fetchall()
+
+    if rows:
+        for item in rows:
+            cur_database = check_if_valid_id(item['tigrfamId'])
+            item['description'] = f"{item['description']} [{cur_database}]"
+
+    print(rows)
     return json.dumps(rows)
 
 # /*----------  END of auto complete  ----------*/
@@ -947,6 +991,39 @@ def _getTigrfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=Fals
     limit_clause = (' LIMIT ' + str(min(int(size_limit), 999999))) if size_limit else ''
     threshold_clause, threshold_values = getThresholdClause(thresholds)
     sql = ''
+    # if not with_sequence:
+    #     sql = f'''
+    #     SELECT ia.member_id AS tigrfamId,
+    #         ia.gtdb_id AS gtdbId,
+    #         ia.gene_id AS geneId,
+    #         t.taxonomy AS tax
+    #     FROM
+    #         interpro_annotation ia
+    #     JOIN
+    #         taxonomy t ON ia.gtdb_id = t.gtdb_id
+    #     WHERE
+    #         ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
+    #         {limit_clause}
+    #             '''
+    # else:
+    #
+    #     sql = f'''
+    #     SELECT ia.member_id AS tigrfamId,
+    #         ia.gtdb_id AS gtdbId,
+    #         ia.gene_id AS geneId,
+    #         c.seq AS sequence,
+    #         t.taxonomy AS tax
+    #     FROM
+    #         interpro_annotation ia
+    #     JOIN
+    #         coordinates c ON ia.gene_id = c.gene_id
+    #     JOIN
+    #         taxonomy t ON ia.gtdb_id = t.gtdb_id
+    #     WHERE
+    #         ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
+    #         {limit_clause}
+    #             '''
+
     if not with_sequence:
         sql = f'''
         SELECT ia.member_id AS tigrfamId, 
@@ -979,6 +1056,8 @@ def _getTigrfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=Fals
             ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
             {limit_clause}
                 '''
+
+    # print(sql)
     c = db.cursor(dictionary=True)
     c.execute(sql)
     rows = c.fetchall()
@@ -1129,7 +1208,8 @@ def getTigrfamResults(database):
     if len(gtdb_ids) == 0:
         return bad_request(msg='empty gtdbIds')
     for d in domains:
-        if not isTigrfamId(d):
+        # if not isTigrfamId(d):
+        if not check_if_valid_id(d):
             return bad_request(msg='%s is not a valid tigrfam id' % d)
     for g in gtdb_ids:
         if not is_gtdb_id(g):

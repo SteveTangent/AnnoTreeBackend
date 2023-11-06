@@ -155,6 +155,7 @@ def _get_node_ids_from_tophits(db, top_hit_table, search_colname, search_ids, th
     """
     node_list = []
     c = db.cursor()
+
     for each_id in search_ids:
         sql = ""
 
@@ -170,12 +171,30 @@ def _get_node_ids_from_tophits(db, top_hit_table, search_colname, search_ids, th
             FROM interpro_annotation ia
             WHERE ia.member_id = "{each_id}";
             '''
+
+        # now should support kegg, interpro and tigrfam
         elif search_colname == 'tigrfam_id':
-            sql = f'''
-            SELECT distinct ia.node_id
-            FROM interpro_annotation ia
-            WHERE ia.member_id = "{each_id}";
-            '''
+            cur_database = check_if_valid_id(each_id)
+
+            if cur_database == 'KEGG':
+                sql = f'''
+                SELECT distinct ka.node_id
+                FROM kegg_annotation ka
+                WHERE ka.kegg_id = "{each_id}";
+                '''
+            elif cur_database == 'InterPro':
+                sql = f'''
+                SELECT distinct ia.node_id
+                FROM interpro_annotation ia
+                WHERE ia.interpro_id = "{each_id}";
+                '''
+            else:
+                sql = f'''
+                SELECT distinct ia.node_id
+                FROM interpro_annotation ia
+                WHERE ia.member_id = "{each_id}";
+                '''
+
 
         # c.execute(sql, threshold_values)
         c.execute(sql)
@@ -697,7 +716,12 @@ member_prefix = {
     'SFLDF': 'SFLD',
     'SM': 'SMART',
     'SSF': 'SUPERFAMILY',
-    'NF': 'NCBIfam'
+    'NF': 'NCBIfam',
+
+
+    'K': 'KEGG',
+    'IPR': 'InterPro'
+
 }
 
 def check_if_valid_id(cur_phrase):
@@ -708,7 +732,8 @@ def check_if_valid_id(cur_phrase):
         # print(cur_prefix,cur_phrase)
         # if cur_phrase.startswith(cur_prefix) and cur_phrase[len(cur_prefix)].isdigit():
         if cur_phrase.startswith(cur_prefix):
-            return member_prefix[prefix]
+            if len(cur_phrase) > len(cur_prefix) and cur_phrase[len(cur_prefix)].isdigit():
+                return member_prefix[prefix]
     return ''
 
 @app.route('/<database>/tigrfam/autocomplete', methods=['GET'])
@@ -736,25 +761,52 @@ def tigrfamAutocomplete(database):
     #         WHERE member_id LIKE 'tigr%' AND id.description LIKE '%{phrase}%' LIMIT 10
     #     '''
 
-    # print(phrase)
+    print(phrase)
     cur_database = check_if_valid_id(phrase)
+
     if len(cur_database) != 0:
-        sql = f'''
-            SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
-            FROM interpro_def id
-            WHERE member_id LIKE '{phrase}%' LIMIT 15
-        '''
+        # sql = f'''
+        #     SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
+        #     FROM interpro_def id
+        #     WHERE member_id LIKE '{phrase}%' LIMIT 15
+        # '''
+
+        # since we are combine all databases
+        if cur_database == 'KEGG':
+            sql = f'''
+                        SELECT DISTINCT(kegg_id) AS tigrfamId, kegg_definition AS description
+                      FROM kegg_def
+                      WHERE kegg_id LIKE '{phrase}%' LIMIT 15
+                          '''
+        elif cur_database == 'InterPro':
+            sql = f'''
+                      SELECT DISTINCT(interpro_id) AS tigrfamId, id.description AS description
+                      FROM interpro_def id
+                      WHERE interpro_id LIKE '{phrase}%' LIMIT 15
+                  '''
+        else:
+            sql = f'''
+                       SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
+                       FROM interpro_def id
+                       WHERE member_id LIKE '{phrase}%' LIMIT 15
+                   '''
     else:
         sql = f'''
-            SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
-            FROM interpro_def id
-            WHERE id.description LIKE '%{phrase}%' LIMIT 15
-        '''
+            (
+                SELECT kegg_id AS tigrfamId, kegg_definition AS description
+                FROM kegg_def
+                WHERE kegg_definition LIKE '%{phrase}%'
+                LIMIT 15
+            )
+            UNION
+            (
+                SELECT member_id AS tigrfamId, description AS description
+                FROM interpro_def    
+                WHERE description LIKE '%{phrase}%'
+                LIMIT 15
+            )
+            LIMIT 15;'''
 
-
-
-
-    # print(sql)
     # c.execute(sql, [phrase.lower() + '%', '%'+phrase.lower()+'%'])
 
     c.execute(sql)
@@ -765,7 +817,7 @@ def tigrfamAutocomplete(database):
             cur_database = check_if_valid_id(item['tigrfamId'])
             item['description'] = f"{item['description']} [{cur_database}]"
 
-    print(rows)
+    # print(rows)
     return json.dumps(rows)
 
 # /*----------  END of auto complete  ----------*/
@@ -991,42 +1043,24 @@ def _getTigrfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=Fals
     limit_clause = (' LIMIT ' + str(min(int(size_limit), 999999))) if size_limit else ''
     threshold_clause, threshold_values = getThresholdClause(thresholds)
     sql = ''
-    # if not with_sequence:
-    #     sql = f'''
-    #     SELECT ia.member_id AS tigrfamId,
-    #         ia.gtdb_id AS gtdbId,
-    #         ia.gene_id AS geneId,
-    #         t.taxonomy AS tax
-    #     FROM
-    #         interpro_annotation ia
-    #     JOIN
-    #         taxonomy t ON ia.gtdb_id = t.gtdb_id
-    #     WHERE
-    #         ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
-    #         {limit_clause}
-    #             '''
-    # else:
-    #
-    #     sql = f'''
-    #     SELECT ia.member_id AS tigrfamId,
-    #         ia.gtdb_id AS gtdbId,
-    #         ia.gene_id AS geneId,
-    #         c.seq AS sequence,
-    #         t.taxonomy AS tax
-    #     FROM
-    #         interpro_annotation ia
-    #     JOIN
-    #         coordinates c ON ia.gene_id = c.gene_id
-    #     JOIN
-    #         taxonomy t ON ia.gtdb_id = t.gtdb_id
-    #     WHERE
-    #         ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
-    #         {limit_clause}
-    #             '''
+    # print(domain_clause)
 
+    # cur_database = check_if_valid_id(phrase)
     if not with_sequence:
-        sql = f'''
-        SELECT ia.member_id AS tigrfamId, 
+        # sql = f'''
+        # SELECT ia.member_id AS tigrfamId,
+        #     ia.gtdb_id AS gtdbId,
+        #     ia.gene_id AS geneId,
+        #     t.taxonomy AS tax
+        # FROM
+        #     interpro_annotation ia
+        # JOIN
+        #     taxonomy t ON ia.gtdb_id = t.gtdb_id
+        # WHERE
+        #     ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
+        #     {limit_clause}
+        #         '''
+        sql = f'''(SELECT ia.member_id AS SearchId, 
             ia.gtdb_id AS gtdbId,
             ia.gene_id AS geneId,
             t.taxonomy AS tax
@@ -1036,12 +1070,57 @@ def _getTigrfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=Fals
             taxonomy t ON ia.gtdb_id = t.gtdb_id
         WHERE 
             ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
-            {limit_clause}
-                '''
+            {limit_clause})
+        UNION
+        (SELECT ia.interpro_id AS SearchId, 
+            ia.gtdb_id AS gtdbId,
+            ia.gene_id AS geneId,
+            t.taxonomy AS tax
+        FROM 
+            interpro_annotation ia 
+        JOIN
+            taxonomy t ON ia.gtdb_id = t.gtdb_id
+        WHERE 
+            ia.interpro_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
+            {limit_clause})
+        UNION
+        (  SELECT 
+            ka.kegg_id AS SearchId, 
+            ka.gene_id AS geneId,
+            ka.gtdb_id AS gtdbId,
+            t.taxonomy AS tax
+        FROM 
+            kegg_annotation ka
+        JOIN 
+            taxonomy t ON t.gtdb_id = ka.gtdb_id
+        WHERE
+            ka.kegg_id IN ({domain_clause}) 
+        AND 
+            ka.gtdb_id IN (
+               {gtdb_clause}
+            )
+        {limit_clause})
+        {limit_clause}
+        '''
     else:
 
-        sql = f'''
-        SELECT ia.member_id AS tigrfamId, 
+        # sql = f'''
+        # SELECT ia.member_id AS tigrfamId,
+        #     ia.gtdb_id AS gtdbId,
+        #     ia.gene_id AS geneId,
+        #     c.seq AS sequence,
+        #     t.taxonomy AS tax
+        # FROM
+        #     interpro_annotation ia
+        # JOIN
+        #     coordinates c ON ia.gene_id = c.gene_id
+        # JOIN
+        #     taxonomy t ON ia.gtdb_id = t.gtdb_id
+        # WHERE
+        #     ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
+        #     {limit_clause}
+        #         '''
+        sql = f'''        (SELECT ia.member_id AS SearchId, 
             ia.gtdb_id AS gtdbId,
             ia.gene_id AS geneId,
             c.seq AS sequence,
@@ -1054,8 +1133,42 @@ def _getTigrfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=Fals
             taxonomy t ON ia.gtdb_id = t.gtdb_id
         WHERE 
             ia.member_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
-            {limit_clause}
-                '''
+            {limit_clause})
+        UNION
+        (SELECT ia.interpro_id AS SearchId, 
+            ia.gtdb_id AS gtdbId,
+            ia.gene_id AS geneId,
+            c.seq AS sequence,
+            t.taxonomy AS tax
+        FROM 
+            interpro_annotation ia 
+        JOIN 
+            coordinates c ON ia.gene_id = c.gene_id
+        JOIN
+            taxonomy t ON ia.gtdb_id = t.gtdb_id
+        WHERE 
+            ia.interpro_id IN ({domain_clause}) AND ia.gtdb_id IN ({gtdb_clause})
+            {limit_clause})
+        UNION
+        (  SELECT 
+            ka.kegg_id AS SearchId, 
+            ka.gene_id AS geneId,
+            ka.gtdb_id AS gtdbId,
+            t.taxonomy AS tax,
+            c.seq AS sequence
+        FROM 
+            kegg_annotation ka
+        JOIN 
+            taxonomy t ON t.gtdb_id = ka.gtdb_id
+        JOIN 
+            coordinates c ON c.gtdb_id = ka.gtdb_id
+        WHERE
+            ka.kegg_id IN ({domain_clause}) 
+        AND 
+            ka.gtdb_id IN ({gtdb_clause})
+            {limit_clause})
+        {limit_clause}
+        '''
 
     # print(sql)
     c = db.cursor(dictionary=True)

@@ -1152,16 +1152,16 @@ def _getTigrfamScanResults(db, domains, gtdb_ids, size_limit, with_sequence=Fals
         UNION
         (  SELECT 
             ka.kegg_id AS SearchId, 
-            ka.gene_id AS geneId,
             ka.gtdb_id AS gtdbId,
-            t.taxonomy AS tax,
-            c.seq AS sequence
+            ka.gene_id AS geneId,
+            c.seq AS sequence,
+            t.taxonomy AS tax
         FROM 
             kegg_annotation ka
         JOIN 
-            taxonomy t ON t.gtdb_id = ka.gtdb_id
+            coordinates c ON ka.gene_id = c.gene_id
         JOIN 
-            coordinates c ON c.gtdb_id = ka.gtdb_id
+            taxonomy t ON ka.gtdb_id = t.gtdb_id
         WHERE
             ka.kegg_id IN ({domain_clause}) 
         AND 

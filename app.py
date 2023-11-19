@@ -713,12 +713,10 @@ member_prefix = {
     'PIRSF': 'PIRSF',
     'PR': 'PRINTS',
     'PS': 'PROSITE',
-    'SFLDF': 'SFLD',
+    'SFLD': 'SFLD', # SLFD will be prefix, id may be SFLDS, SFLDG....
     'SM': 'SMART',
     'SSF': 'SUPERFAMILY',
     'NF': 'NCBIfam',
-
-
     'K': 'KEGG',
     'IPR': 'InterPro'
 
@@ -731,9 +729,11 @@ def check_if_valid_id(cur_phrase):
         cur_prefix = prefix.lower()
         # print(cur_prefix,cur_phrase)
         # if cur_phrase.startswith(cur_prefix) and cur_phrase[len(cur_prefix)].isdigit():
-        if cur_phrase.startswith(cur_prefix):
+        if cur_phrase.startswith(cur_prefix) and cur_prefix != 'SFLD':
             if len(cur_phrase) > len(cur_prefix) and cur_phrase[len(cur_prefix)].isdigit():
                 return member_prefix[prefix]
+        elif cur_prefix == 'SFLD':
+            return 'SFLD'
     return ''
 
 @app.route('/<database>/tigrfam/autocomplete', methods=['GET'])

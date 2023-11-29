@@ -722,17 +722,18 @@ member_prefix = {
 
 }
 
+
 def check_if_valid_id(cur_phrase):
     cur_phrase = cur_phrase.lower()
     prefix_list = member_prefix.keys()
     for prefix in prefix_list:
         cur_prefix = prefix.lower()
-        # print(cur_prefix,cur_phrase)
+
         # if cur_phrase.startswith(cur_prefix) and cur_phrase[len(cur_prefix)].isdigit():
-        if cur_phrase.startswith(cur_prefix) and cur_prefix != 'SFLD':
+        if cur_phrase.startswith(cur_prefix) and cur_prefix != 'sfld':
             if len(cur_phrase) > len(cur_prefix) and cur_phrase[len(cur_prefix)].isdigit():
                 return member_prefix[prefix]
-        elif cur_prefix == 'SFLD':
+        elif cur_phrase[:4] == 'sfld':
             return 'SFLD'
     return ''
 
@@ -745,31 +746,12 @@ def tigrfamAutocomplete(database):
         return err_msg
     db = getDb(database)
     c = db.cursor(dictionary=True)
-    # sql = """SELECT DISTINCT(c.tigrfam_id) AS tigrfamId, c.definition AS description
-
-    sql = ""
-    # if len(phrase) >= 4 and phrase[:4].lower() == 'tigr':
-    #     sql = f'''
-    #         SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
-    #         FROM interpro_def id
-    #         WHERE member_id LIKE '{phrase}%' LIMIT 10
-    #     '''
-    # else:
-    #     sql = f'''
-    #         SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
-    #         FROM interpro_def id
-    #         WHERE member_id LIKE 'tigr%' AND id.description LIKE '%{phrase}%' LIMIT 10
-    #     '''
 
     print(phrase)
     cur_database = check_if_valid_id(phrase)
 
+    # if search is id
     if len(cur_database) != 0:
-        # sql = f'''
-        #     SELECT DISTINCT(member_id) AS tigrfamId, id.description AS description
-        #     FROM interpro_def id
-        #     WHERE member_id LIKE '{phrase}%' LIMIT 15
-        # '''
 
         # since we are combine all databases
         if cur_database == 'KEGG':

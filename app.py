@@ -19,7 +19,13 @@ import config
 from new_tree_exporter import get_tree
 import json
 import itertools
-
+# import pymongo
+#
+#
+# db_url = "mongodb://localhost:27017/"
+#
+# db_name = 'annoview'
+# client = pymongo.MongoClient(db_url)[db_name]
 
 app = Flask(__name__)
 
@@ -204,65 +210,6 @@ def _get_node_ids_from_tophits(db, top_hit_table, search_colname, search_ids, th
 
     intersection = set.intersection(*node_list)
 
-#     if search_colname == 'kegg_id':
-#         sql = f"""
-#         SELECT node_id
-# FROM node n
-# JOIN
-#     (
-#     SELECT
-#         gtdb_id,
-#         COUNT(DISTINCT kegg_id) AS num_hit_per_genome
-#     FROM kegg_annotation
-#     WHERE kegg_id in ({search_id_quoted})
-#     GROUP BY gtdb_id
-#     HAVING num_hit_per_genome >= {str(len(search_ids))}
-#     ) g
-# ON n.gtdb_id = g.gtdb_id
-# """
-#     elif search_colname == 'pfam_id':
-#         sql = f'''
-# SELECT node_id
-# FROM node n
-# JOIN(
-# SELECT
-#     ia.gtdb_id,
-#     COUNT(DISTINCT ia.member_id) AS num_hit_per_genome
-# FROM
-#     interpro_annotation ia
-# WHERE ia.member_id in ({search_id_quoted})
-# GROUP BY ia.gtdb_id
-# HAVING num_hit_per_genome >= {str(len(search_ids))}
-#     ) g
-# ON n.gtdb_id = g.gtdb_id
-#     '''
-#     elif search_colname == 'tigrfam_id':
-#
-#         sql = f'''
-# SELECT node_id
-# FROM node n
-# JOIN(
-# SELECT
-#     ia.gtdb_id,
-#     COUNT(DISTINCT ia.interpro_id) AS num_hit_per_genome
-# FROM
-#     interpro_annotation ia
-# WHERE ia.interpro_id in ({search_id_quoted})
-# GROUP BY ia.gtdb_id
-# HAVING num_hit_per_genome >= {str(len(search_ids))}
-#     ) g
-# ON n.gtdb_id = g.gtdb_id
-#     '''
-#
-#     print(sql)
-
-    # c = db.cursor()
-    # c.execute(sql)
-    # rows = c.fetchall()
-    # if not rows:  # no result
-    #     return []
-    # node_ids = [r[0] for r in rows]
-    # print(node_ids)
     node_ids = list(intersection)
     return sorted(node_ids)
 
@@ -389,21 +336,38 @@ def queryByTigrfam(database):
     db = getDb(database)
     if not request.json:
         return abort(400)
+
+    print(request.json)
     if 'domains' not in request.json:
         return bad_request(msg='domains not given')
     domains = request.json.get('domains')
     if not domains or len(domains) == 0:
         return bad_request(msg='empty domains')
+
+    current_query = request.json['domains']
+    if len(current_query) == 1:
+        if current_query[0].split('_')[0] == 'bacteria':
+            hits = get_distribution_from_token(current_query[0])
+            if len(hits) == 0:
+                return bad_request(msg=str('no hits found with current token'))
+            return json.dumps(hits)
+        elif current_query[0].split('_')[0] == 'archaea':
+            hits = get_distribution_from_token(current_query[0])
+            if len(hits) == 0:
+                return bad_request(msg=str('no hits found with current token'))
+            return json.dumps(hits)
+
     for d in domains:
         # if not isTigrfamId(d):
         if not check_if_valid_id(d):
-            return bad_request(msg='%s is not a valid tigrfam id' % d)
+            return bad_request(msg='%s is not a valid annotation id' % d)
             # return bad_request(msg='%s is not a valid interpro id' % d)
-    thresholds = request.json.get('thresholds',[])
+    thresholds = request.json.get('thresholds', [])
     try:
         check_threshold(thresholds, TIGRFAM_ALLOWED_FIELDS)
     except Exception as e:
         return bad_request(msg=str(e))
+
     hits = getNodeIDFromTigrfam(db, domains, thresholds=thresholds)
     return json.dumps(hits)
 
@@ -1293,6 +1257,15 @@ def getTigrfamResults(database):
     if 'domains' not in request.json:
         return bad_request(msg='domains not given')
     domains = request.json.get('domains')
+
+    current_query = request.json['domains']
+    if len(current_query) == 1:
+        if current_query[0].split('_')[0] == 'bacteria':
+            return json.dumps([])
+        elif current_query[0].split('_')[0] == 'archaea':
+            return json.dumps([])
+
+
     gtdb_ids = request.json.get('gtdbIds')
     with_sequence = request.json.get('withSequence')
     size_limit = request.json.get('sizeLimit')
@@ -1354,6 +1327,138 @@ def getVersion(database):
                 return make_error_response('Pfam SQL file name does not contain version info')
             version_info['pfam'] = m.group(1)
     return json.dumps(version_info)
+
+
+# --------------------------------- AnnoTree and AnnoView connection -----------------------------
+
+@app.route('/annoview/get_distribution', methods=['OPTIONS'])
+@crossdomain(origin='*', headers=['content-type', 'accept'])
+def allowCORSdomainsDistribution():
+    return True
+@app.route('/annoview/get_distribution', methods=['POST'])
+@crossdomain(origin='*', headers=['content-type', 'accept'])
+def get_distribution_from_gtdb_ids():
+    # if the file with target token exists and gtdb list is null, then use the file
+    # if the file with target token exists and gtdb list is not null, then replace
+    # if no file, gtdb list is not null, create the file
+    # if both file and gtdb are null, error
+
+    gtdbId = request.form['gtdbData']
+    token = request.form['token']
+    database = request.form['db']
+
+    gtdbId = gtdbId.split(',')
+
+    db = ''
+    if 'bacteria' in database:
+        db = 'gtdb_bacteria'
+    elif 'archaea' in database:
+        db = 'gtdb_archaea'
+    else:
+        print('database error')
+        return json.dumps([])
+
+    db = getDb(db)
+    # print(gtdbId)
+
+    file_folder = 'tmp'
+    filename = 'search_result.txt'
+    current_dir_path = f'{file_folder}/{token}'
+    current_file_path = f'{current_dir_path}/{filename}'
+    use_file = False
+
+    if not os.path.exists(current_dir_path):
+        if len(gtdbId) == 0:
+            print('both file and gtdb list are empty!')
+            return json.dumps([])
+        else:
+            os.makedirs(current_dir_path)
+    # if the file is already exists with the target token, then delete and recreate
+    else:
+        if os.path.exists(current_file_path) and len(gtdbId) != 0:
+            os.remove(current_file_path)
+
+        # only gtdb list
+        elif os.path.exists(current_file_path) and len(gtdbId) == 0:
+            use_file = True
+
+    current_gtdb_list = []
+    if use_file:
+        with open(current_file_path) as file:
+            lines = [line.strip() for line in file]
+        current_gtdb_list = lines
+    else:
+        current_gtdb_list = gtdbId
+        with open(current_file_path, 'w') as f:
+            for line in current_gtdb_list:
+                f.write(f"{line}\n")
+
+
+    # search results based on gtdb ids
+    c = db.cursor()
+    search_id_quoted = (",".join(["'%s'" % search_id for search_id in current_gtdb_list]))
+    # print(search_id_quoted)
+    sql = f'''
+           SELECT node_id FROM node WHERE gtdb_id IN ({search_id_quoted});
+            '''
+    # c.execute(sql, threshold_values)
+    c.execute(sql)
+    rows = c.fetchall()
+    cur_set = set([x[0] for x in rows])
+    node_list = sorted(list(cur_set))
+
+    # print(node_list)
+    return json.dumps(node_list)
+
+def get_distribution_from_token(url_string):
+    # if the file with target token exists and gtdb list is null, then use the file
+    # if both file and gtdb are null, error
+
+    # url string should be a string in format: bacteria_{token} or archaea_{token}
+    database = url_string.split('_')[0]
+    token = url_string.split('_')[1]
+
+    db = ''
+    if 'bacteria' in database:
+        db = 'gtdb_bacteria'
+    elif 'archaea' in database:
+        db = 'gtdb_archaea'
+    else:
+        print('database error')
+        return json.dumps([])
+
+    db = getDb(db)
+    # print(gtdbId)
+
+    file_folder = 'tmp'
+    filename = 'search_result.txt'
+    current_dir_path = f'{file_folder}/{token}'
+    current_file_path = f'{current_dir_path}/{filename}'
+
+
+    if not os.path.exists(current_dir_path):
+        return []
+
+    with open(current_file_path) as file:
+        lines = [line.strip() for line in file]
+    current_gtdb_list = lines
+
+
+    # search results based on gtdb ids
+    c = db.cursor()
+    search_id_quoted = (",".join(["'%s'" % search_id for search_id in current_gtdb_list]))
+    # print(search_id_quoted)
+    sql = f'''
+           SELECT node_id FROM node WHERE gtdb_id IN ({search_id_quoted});
+            '''
+    # c.execute(sql, threshold_values)
+    c.execute(sql)
+    rows = c.fetchall()
+    cur_set = set([x[0] for x in rows])
+    node_list = sorted(list(cur_set))
+
+    # print(node_list)
+    return node_list
 
 if __name__ == '__main__':
     # current_working_directory = os.getcwd()

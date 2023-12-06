@@ -349,12 +349,12 @@ def queryByTigrfam(database):
         if current_query[0].split('_')[0] == 'bacteria':
             hits = get_distribution_from_token(current_query[0])
             if len(hits) == 0:
-                return bad_request(msg=str('no hits found with current token'))
+                return bad_request(msg=str('no hits found with current token, bacteria'))
             return json.dumps(hits)
         elif current_query[0].split('_')[0] == 'archaea':
             hits = get_distribution_from_token(current_query[0])
             if len(hits) == 0:
-                return bad_request(msg=str('no hits found with current token'))
+                return bad_request(msg=str('no hits found with current token, archaea'))
             return json.dumps(hits)
 
     for d in domains:
@@ -1348,7 +1348,15 @@ def get_distribution_from_gtdb_ids():
     database = request.form['db']
 
     gtdbId = gtdbId.split(',')
-
+    # gtdbId_lst = []
+    # for each_id in gtdbId:
+    #     # if the gtdb_id contain diamond search for e value
+    #     if 'E-Value' in each_id:
+    #         gtdbId_lst.append(each_id.split(' ')[0])
+    #     else:
+    #         gtdbId_lst.append(each_id)
+    # gtdbId = gtdbId_lst
+    # print(gtdbId)
     db = ''
     if 'bacteria' in database:
         db = 'gtdb_bacteria'
